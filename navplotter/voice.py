@@ -1,4 +1,4 @@
-"""python3 -m navplotter.voice: the voice assistant, all on the Raspberry, without internet.
+"""python3 -m navplotter.voice: the voice assistant, all on this computer (a PC with Ubuntu, or a Raspberry Pi), without internet.
 
 Speech to text with whisper.cpp (whisper-server, the model kept loaded), the answer from the node's own data
 (navplotter/assistant.py) or from a small local language model (llama.cpp, llama-server, if installed), and the
@@ -10,6 +10,11 @@ starts with the wake word ("computer, dove siamo?") is a question; the wake word
 next phrase is the question. Just after an answer the next phrase needs no wake word, for a conversation.
 With "course" on it says when the course over ground stays off the bearing to the destination waypoint.
 The settings are in config.json in --home.
+
+Each answer to a question is timed, to compare computers: the log has a line "latency: ..." and /status has
+"latency": the speech to text (stt), the answer up to its first sentence (answer: the node's data or the language
+model), Piper for that sentence (voice), and the total from the end of the question to the first word heard.
+With "always" on, the total also has the quiet that ends a phrase (pause).
 
 It listens only on 127.0.0.1; the node's web server passes /voice/... to it:
   GET  /status        JSON: ready parts, state (idle, listening, thinking, speaking), last question and answer
@@ -72,6 +77,11 @@ def beep_wav(path, freq=880, ms=120):
                                                       * min(1, i / 200, (n - i) / 200))) for i in range(n)))
 
 
+def threads():
+    """Threads for whisper.cpp and llama.cpp: the cores of this computer, up to 8 (more give little)."""
+    return str(max(1, min(8, os.cpu_count() or 4)))
+
+
 def first_tool(*names):
     for n in names:
         if shutil.which(n):
@@ -89,8 +99,13 @@ class Parts:
         models = sorted(f for f in os.listdir(os.path.join(home, "models")) if f.startswith("ggml-")) \
             if os.path.isdir(os.path.join(home, "models")) else []
         self.whisper_model = os.path.join(home, "models", models[-1]) if models else None
-        for pref in ("ggml-small", "ggml-base", "ggml-tiny"):        # the best one that is there
-            hit = [m for m in models if m.startswith(pref)]
+        try:        # the one chosen in tools/voice-install.sh
+            with open(os.path.join(home, "models", "use")) as f:
+                chosen = f.read().strip()
+        except OSError:
+            chosen = ""
+        for pref in (chosen or "-", "ggml-large-v3-turbo", "ggml-medium", "ggml-small", "ggml-base", "ggml-tiny"):
+            hit = [m for m in models if m.startswith(pref)]     # otherwise the best one that is there
             if hit:
                 self.whisper_model = os.path.join(home, "models", hit[0])
                 break
@@ -102,6 +117,12 @@ class Parts:
         ggufs = sorted(f for f in os.listdir(os.path.join(home, "llm")) if f.endswith(".gguf")) \
             if os.path.isdir(os.path.join(home, "llm")) else []
         self.llm_model = os.path.join(home, "llm", ggufs[0]) if ggufs else None
+        # The GPU llama.cpp and whisper.cpp were built for (tools/voice-install.sh writes it): cuda, vulkan or none
+        try:
+            with open(os.path.join(home, "gpu")) as f:
+                self.gpu = f.read().strip() or "none"
+        except OSError:
+            self.gpu = "none"
         self.record = first_tool("pw-record", "parecord")
         self.stream = first_tool("parecord", "pw-record")      # raw audio on stdout, for listening all the time
         self.play = first_tool("pw-play", "paplay", "aplay")
@@ -231,19 +252,24 @@ class Voice:
         self.deaf_until = 0.0       # do not take our own voice or beep for a question
         self.hearing = False        # the always-on listener is running
         self.cancel = False
+        self.t0 = None              # when the question ended, for the latency
+        self.ans_since = None
+        self.lat = {}               # the times of this question, in seconds
+        self.latency = None         # those of the last answer
         self.tmp = tempfile.mkdtemp(prefix="navplotter-voice-")
         self.beep = os.path.join(self.tmp, "beep.wav")
         beep_wav(self.beep)
         p = self.parts
         self.stt = self.llm = None
         if p.whisper_server and p.whisper_model:
-            self.stt = Server("whisper-server", [p.whisper_server, "-m", p.whisper_model, "-l", "it", "-t", "4",
+            self.stt = Server("whisper-server", [p.whisper_server, "-m", p.whisper_model, "-l", "it", "-t", threads(),
                                                  "--host", "127.0.0.1", "--port", str(args.stt_port),
                                                  "--prompt", PROMPT],
                               "http://127.0.0.1:%d/" % args.stt_port)
         if p.llama_server and p.llm_model:
-            self.llm = Server("llama-server", [p.llama_server, "-m", p.llm_model, "-c", "2048", "-t", "4",
-                                               "--host", "127.0.0.1", "--port", str(args.llm_port)],
+            gpu = ["-ngl", "99"] if getattr(p, "gpu", "none") != "none" else []     # all the layers on the GPU
+            self.llm = Server("llama-server", [p.llama_server, "-m", p.llm_model, "-c", "4096", "-t", threads()] + gpu
+                              + ["--host", "127.0.0.1", "--port", str(args.llm_port)],
                               "http://127.0.0.1:%d/health" % args.llm_port)
         threading.Thread(target=self._watchdog, daemon=True).start()
         self.phrases = queue.Queue(maxsize=2)
@@ -312,6 +338,7 @@ class Voice:
                 self.rec.kill()
             self.rec = None
             self.state = "thinking"
+            self._timer(time.monotonic())
         threading.Thread(target=self._from_audio, daemon=True).start()
 
     def _watchdog(self):
@@ -338,11 +365,39 @@ class Voice:
                 return
             self.stop_speaking()
             self.state, self.heard, self.reply, self.error = "thinking", text, "", None
+            self._timer(time.monotonic())
         threading.Thread(target=self._answer, args=(text,), daemon=True).start()
+
+    # ---- the latency ----
+
+    def _timer(self, t0, pause=0.0):
+        """A question ended at t0 (monotonic): its times start from there. pause: the quiet that ended it."""
+        self.t0, self.lat = t0, {"pause": pause} if pause else {}
+
+    def _timed(self, step, since):
+        if self.t0 is not None:
+            self.lat[step] = self.lat.get(step, 0.0) + time.monotonic() - since
+
+    def _first_word(self):
+        """The first sentence of the answer starts playing: the latency of this question is complete."""
+        if self.t0 is None:
+            return
+        lat = {k: round(v, 2) for k, v in self.lat.items()}
+        lat["total"] = round(time.monotonic() - self.t0 + self.lat.get("pause", 0.0), 2)
+        self.latency, self.t0 = lat, None
+        log.info("latency: %s", ", ".join("%s %.2f s" % (k, lat[k]) for k in ("pause", "stt", "answer", "voice", "total")
+                                         if k in lat))
 
     # ---- the three steps ----
 
     def transcribe(self, wav):
+        since = time.monotonic()
+        try:
+            return self._transcribe(wav)
+        finally:
+            self._timed("stt", since)
+
+    def _transcribe(self, wav):
         port = self.args.stt_port
         if not (self.stt and self.stt.ok):
             raise RuntimeError("whisper-server not ready")
@@ -375,6 +430,7 @@ class Voice:
         return data
 
     def _answer(self, text):
+        self.ans_since = time.monotonic()
         self.heard = text
         data = self.node_data()
         reply, action = assistant.answer(text, data)
@@ -430,7 +486,10 @@ class Voice:
             self.heard, self.reply, self.error = heard, "", error
             self.cancel = False
         said = []
+        since, self.ans_since = self.ans_since or time.monotonic(), None
         for sent in parts:
+            if not said:
+                self._timed("answer", since)
             if self.cancel:
                 break
             said.append(sent)
@@ -460,6 +519,7 @@ class Voice:
             if self.state != "idle":
                 return False
             self.state = "speaking"
+            self.t0 = None              # nobody asked: no latency
         threading.Thread(target=self._done, args=("", text), daemon=True).start()
         return True
 
@@ -574,6 +634,7 @@ class Voice:
         if self.state != "idle":
             return
         end = end or time.monotonic()
+        self._timer(end, pause=END_QUIET * FRAME / RATE if self.cfg["always"] else 0.0)
         following = time.monotonic() < self.follow_until
         text = self._hear(pcm)
         prev, self.prev_phrase = self.prev_phrase, None
@@ -638,10 +699,16 @@ class Voice:
     def speak(self, text):
         p = self.parts
         if not (p.piper and p.voice):
+            self._first_word()
             raise RuntimeError("Piper or its Italian voice is not installed")
         out = os.path.join(self.tmp, "answer.wav")
-        subprocess.run([p.piper, "--model", p.voice, "--output_file", out], input=text.encode(),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=60)
+        since = time.monotonic()
+        try:
+            subprocess.run([p.piper, "--model", p.voice, "--output_file", out], input=text.encode(),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=60)
+        finally:
+            self._timed("voice", since)
+            self._first_word()
         self._play(out, wait=True)
 
     def _play(self, wav, wait=False):
@@ -676,7 +743,8 @@ class Voice:
                 "llm": bool(self.llm and self.llm.ok), "mic": bool(p.record), "config": self.cfg,
                 "hearing": self.hearing, "follow": time.monotonic() < self.follow_until,
                 "sttModel": os.path.basename(p.whisper_model) if p.whisper_model else None,
-                "llmModel": os.path.basename(p.llm_model) if p.llm_model else None,
+                "llmModel": os.path.basename(p.llm_model) if p.llm_model else None, "gpu": getattr(p, "gpu", "none"),
+                "latency": self.latency,
                 "history": [{"q": q, "a": a} for q, a in self.history]}
 
 

@@ -127,6 +127,25 @@ class Answers(unittest.TestCase):
         self.assertIsNone(A.course_error(d))
 
 
+RATE_BYTES = V.RATE * 2   # one second of audio
+
+
+class Parts(unittest.TestCase):
+    def test_best_models_and_gpu(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "models"))
+            for m in ("ggml-small.bin", "ggml-large-v3-turbo-q5_0.bin", "ggml-base.bin"):
+                open(os.path.join(d, "models", m), "w").close()
+            p = V.Parts(d)
+            self.assertTrue(p.whisper_model.endswith("ggml-large-v3-turbo-q5_0.bin"))
+            self.assertEqual(p.gpu, "none")
+            open(os.path.join(d, "models", "use"), "w").write("ggml-small.bin\n")     # chosen: to compare
+            self.assertTrue(V.Parts(d).whisper_model.endswith("ggml-small.bin"))
+            open(os.path.join(d, "gpu"), "w").write("cuda\n")
+            self.assertEqual(V.Parts(d).gpu, "cuda")
+        self.assertTrue(1 <= int(V.threads()) <= 8)
+
+
 class Helpers(unittest.TestCase):
     def test_wake_word(self):
         self.assertEqual(V.after_wake("Computer, dove siamo?", "computer"), "dove siamo")
@@ -254,6 +273,25 @@ class Service(unittest.TestCase):
         played = open(self.played).read()
         self.assertTrue(played.startswith("RIFF"))         # the beep
         self.assertIn("Boa è a 2,9 miglia", played)        # then the answer, through Piper
+
+    def test_latency(self):
+        self.v.start_listening()
+        time.sleep(0.3)
+        self.v.stop_listening()
+        self.wait_idle()
+        lat = self.v.status()["latency"]
+        self.assertEqual(set(lat), {"stt", "answer", "voice", "total"})
+        self.assertGreaterEqual(lat["total"], lat["stt"] + lat["answer"] + lat["voice"] - 0.02)
+        self.v.announce("Di nuovo in rotta verso Boa.")     # nobody asked: the last latency stays
+        self.wait_idle()
+        self.assertEqual(self.v.status()["latency"], lat)
+        self.v.cfg["always"] = True                         # a phrase heard: the quiet that ended it counts
+        self.heard = " Computer, dove siamo?"
+        self.v.heard_phrase(bytes(RATE_BYTES))
+        self.wait_idle()
+        lat = self.v.status()["latency"]
+        self.assertAlmostEqual(lat["pause"], V.END_QUIET * V.FRAME / V.RATE, places=2)
+        self.assertGreaterEqual(lat["total"], lat["pause"])
 
     def test_ask_sends_message(self):
         self.v.ask("manda un messaggio a tutti arriviamo alle sei")

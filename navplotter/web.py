@@ -110,7 +110,7 @@ def make_handler(node, web_dir):
             except urllib.error.HTTPError as e:
                 self._send(e.code, e.read() or {"error": True, "reason": "HTTP %d" % e.code})
             except (urllib.error.URLError, OSError) as e:
-                self._send(502, {"error": True, "reason": "no internet on the Raspberry Pi (%s)" % getattr(e, "reason", e)})
+                self._send(502, {"error": True, "reason": "no internet on the NavPlotter computer (%s)" % getattr(e, "reason", e)})
 
         def do_OPTIONS(self):
             self.send_response(204)
@@ -213,7 +213,7 @@ def make_handler(node, web_dir):
                     pass
                 self._send(200, {"ok": True})
             elif path == "/api/mute":
-                self._send(200, {"ok": True})       # no buzzer on the Raspberry Pi
+                self._send(200, {"ok": True})       # no buzzer on this computer
             elif path == "/api/track/new":
                 with node.lock:
                     node.track.new()
