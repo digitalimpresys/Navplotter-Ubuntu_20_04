@@ -1,0 +1,69 @@
+#!/bin/bash
+# Installs or updates the NavPlotter node on Raspberry Pi OS (Zero 2 W, Pi 4, Pi 5):
+#   curl -sSL https://raw.githubusercontent.com/digitalimpresys/Navplotter-Linux/main/install.sh | sudo bash
+# or, from a copy of the repository:  sudo ./install.sh
+set -euo pipefail
+
+REPO=https://github.com/digitalimpresys/Navplotter-Linux.git
+BRANCH=${NAVPLOTTER_BRANCH:-main}
+DEST=/opt/navplotter
+DATA=/var/lib/navplotter
+
+if [ "$(id -u)" != 0 ]; then echo "Run it with sudo"; exit 1; fi
+
+echo "== Packages"
+apt-get update -qq
+apt-get install -y -qq python3 python3-serial git >/dev/null
+
+echo "== Program in $DEST"
+HERE=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); fi
+if [ -n "$HERE" ] && [ -d "$HERE/navplotter" ] && [ "$HERE" != "$DEST" ]; then
+  mkdir -p "$DEST"
+  cp -r "$HERE/navplotter" "$HERE/web" "$HERE/systemd" "$DEST/"
+elif [ -d "$DEST/.git" ]; then
+  git -C "$DEST" fetch -q origin "$BRANCH" && git -C "$DEST" checkout -q -B "$BRANCH" "origin/$BRANCH"
+else
+  rm -rf "$DEST"
+  git clone -q -b "$BRANCH" "$REPO" "$DEST"
+fi
+
+echo "== User navplotter (serial port access)"
+id navplotter >/dev/null 2>&1 || useradd --system --home "$DATA" --shell /usr/sbin/nologin navplotter
+usermod -aG dialout,plugdev navplotter   # plugdev: some systems give the ESP32-S3 USB port (Heltec V4) to it
+mkdir -p "$DATA"
+chown -R navplotter:navplotter "$DATA"
+
+echo "== Fixed name for the Heltec modem (V2: CP2102, V4: ESP32-S3 USB): /dev/navplotter-modem"
+cat > /etc/udev/rules.d/99-navplotter-modem.rules <<'RULE'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="navplotter-modem", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", SYMLINK+="navplotter-modem", GROUP="dialout", MODE="0660", ENV{ID_MM_DEVICE_IGNORE}="1"
+RULE
+udevadm control --reload-rules && udevadm trigger || true
+
+if [ ! -f "$DATA/settings.json" ]; then
+  echo '{"modem": "/dev/navplotter-modem"}' > "$DATA/settings.json"
+  chown navplotter:navplotter "$DATA/settings.json"
+fi
+
+echo "== Service"
+install -m 644 "$DEST/systemd/navplotter.service" /etc/systemd/system/navplotter.service
+systemctl daemon-reload
+systemctl enable -q navplotter
+systemctl restart navplotter
+
+# The camera: only where there is a USB camera or a Hailo AI HAT, or when asked with NAVPLOTTER_CAMERA=1
+if [ "${NAVPLOTTER_CAMERA:-}" = 1 ] || ls /dev/v4l/by-id/* >/dev/null 2>&1 || [ -e /dev/hailo0 ]; then
+  echo "== Camera service (python3-opencv; recognition with the Hailo AI HAT if hailo-all is installed)"
+  apt-get install -y -qq python3-opencv python3-numpy >/dev/null
+  usermod -aG video navplotter
+  install -m 644 "$DEST/systemd/navplotter-camera.service" /etc/systemd/system/navplotter-camera.service
+  systemctl daemon-reload
+  systemctl enable -q navplotter-camera
+  systemctl restart navplotter-camera
+fi
+
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+echo
+echo "NavPlotter is running. Web app: http://${IP:-$(hostname).local}/"
+echo "Settings: $DATA/settings.json   Log: journalctl -u navplotter -f"
