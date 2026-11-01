@@ -6,11 +6,13 @@
 #   NAVPLOTTER_LLM=1 bash /opt/navplotter/tools/voice-install.sh     also the local language model
 # Choices (environment variables), the defaults depending on the computer:
 #   NAVPLOTTER_WHISPER=large-v3-turbo|medium|small|base|tiny   speech recognition model
-#       PC: large-v3-turbo (quantized, 550 MB: much better in Italian, fast on a PC); Raspberry Pi: small (466 MB)
+#       PC with a GPU or more than 4 cores: large-v3-turbo (quantized, 550 MB, much better in Italian);
+#       other PCs and Raspberry Pi: small (466 MB)
 #   NAVPLOTTER_LLM_MODEL=1.5b|3b|7b       language model
-#       PC with 12 GB of RAM or more: 7b (4.7 GB, the best answers); other PCs: 3b (2 GB); Raspberry Pi: 1.5b (1.1 GB)
+#       PC with a GPU or more than 4 cores and 12 GB of RAM: 7b (4.7 GB, the best answers); other PCs: 3b (2 GB);
+#       Raspberry Pi: 1.5b (1.1 GB)
 #   NAVPLOTTER_GPU=auto|cuda|vulkan|none  build whisper.cpp and llama.cpp for the graphics card
-#       auto: cuda with an NVIDIA card (nvidia-smi works), otherwise none (CPU). vulkan: AMD or Intel cards.
+#       auto: cuda with an NVIDIA card of 4 GB or more, otherwise none (CPU). vulkan: AMD or Intel cards.
 # Everything goes in ~/.local/share/navplotter-voice; downloads that stop are resumed by running it again.
 # Running it again with other choices changes models and build (the models already downloaded stay, to compare).
 set -euo pipefail
@@ -21,19 +23,30 @@ CODE=/opt/navplotter
 ARCH=$(uname -m)
 RAM_GB=$(awk '/MemTotal/ {print int($2 / 1048576 + 0.5)}' /proc/meminfo)
 JOBS=$(nproc)
-if [ "$ARCH" = x86_64 ]; then
+GPU=${NAVPLOTTER_GPU:-auto}
+if [ "$GPU" = auto ]; then
+  GPU=none
+  # An NVIDIA card with at least 4 GB: smaller or older ones (a GeForce 840M with 2 GB) are slower than the CPU
+  # here, and the CUDA of Ubuntu 26.04 no longer builds for the oldest ones
+  if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then
+    VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc 0-9)
+    if [ "${VRAM:-0}" -ge 3900 ]; then GPU=cuda
+    else echo "NVIDIA card with ${VRAM:-?} MB: too small for the models, the CPU is used (NAVPLOTTER_GPU=cuda to try anyway)"; fi
+  fi
+fi
+if [ "$ARCH" = x86_64 ] && { [ "$GPU" != none ] || [ "$JOBS" -gt 4 ]; }; then
+  # A PC with a GPU or more than 4 cores: the big models
   WHISPER=${NAVPLOTTER_WHISPER:-large-v3-turbo}
   if [ "$RAM_GB" -ge 12 ]; then LLM_MODEL=${NAVPLOTTER_LLM_MODEL:-7b}; else LLM_MODEL=${NAVPLOTTER_LLM_MODEL:-3b}; fi
-  PIPER_ARCH=x86_64
+elif [ "$ARCH" = x86_64 ]; then
+  # A PC with 4 cores or fewer and no GPU: large-v3-turbo took 9 s for a short question on one (i5 of 2015), small is several times faster
+  WHISPER=${NAVPLOTTER_WHISPER:-small}
+  LLM_MODEL=${NAVPLOTTER_LLM_MODEL:-3b}
 else
   WHISPER=${NAVPLOTTER_WHISPER:-small}
   LLM_MODEL=${NAVPLOTTER_LLM_MODEL:-1.5b}
-  PIPER_ARCH=aarch64
 fi
-GPU=${NAVPLOTTER_GPU:-auto}
-if [ "$GPU" = auto ]; then
-  if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then GPU=cuda; else GPU=none; fi
-fi
+[ "$ARCH" = x86_64 ] && PIPER_ARCH=x86_64 || PIPER_ARCH=aarch64
 case "$GPU" in
   cuda)   GGML="-DGGML_CUDA=ON -DGGML_VULKAN=OFF" ;;
   vulkan) GGML="-DGGML_CUDA=OFF -DGGML_VULKAN=ON" ;;

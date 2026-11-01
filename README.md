@@ -167,9 +167,12 @@ Se si interrompe, rilancialo e riprende. I modelli dipendono dal computer:
 
 | | PC (x86_64) | Raspberry Pi |
 |---|---|---|
-| Riconoscimento (`NAVPLOTTER_WHISPER`) | `large-v3-turbo`, 550 MB | `small`, 466 MB |
-| Modello linguistico (`NAVPLOTTER_LLM_MODEL`) | `7b` (4,7 GB) con almeno 12 GB di RAM, altrimenti `3b` (2 GB) | `1.5b` (1,1 GB) |
-| Scheda grafica (`NAVPLOTTER_GPU`) | `auto`: `cuda` con una NVIDIA, altrimenti la CPU; `vulkan` per AMD e Intel | CPU |
+| Scheda grafica (`NAVPLOTTER_GPU`) | `auto`: `cuda` con una NVIDIA da almeno 4 GB, altrimenti la CPU; `vulkan` per AMD e Intel | CPU |
+| Riconoscimento (`NAVPLOTTER_WHISPER`) | `large-v3-turbo` (550 MB) con una GPU o più di 4 core, altrimenti `small` (466 MB) | `small` |
+| Modello linguistico (`NAVPLOTTER_LLM_MODEL`) | `7b` (4,7 GB) con una GPU o più di 4 core e almeno 12 GB di RAM, altrimenti `3b` (2 GB) | `1.5b` (1,1 GB) |
+
+Le schede NVIDIA piccole o vecchie (per esempio una GeForce 840M da 2 GB) non servono: il modello non ci sta, e il
+CUDA di Ubuntu 26.04 non le supporta più.
 
 Per provare altre combinazioni basta rilanciarlo, per esempio
 `NAVPLOTTER_WHISPER=small NAVPLOTTER_LLM_MODEL=3b NAVPLOTTER_LLM=1 bash /opt/navplotter/tools/voice-install.sh`:
