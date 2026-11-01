@@ -180,7 +180,12 @@ i modelli di riconoscimento già scaricati restano, e si usa quello scelto per u
 Qwen2.5-7B-Instruct-Q4_K_M.gguf · GPU cuda", e nel log `latency: ...`. Le parti sono: il riconoscimento della voce
 (stt), la risposta fino alla sua prima frase (answer: i dati del nodo o il modello linguistico), Piper per quella
 frase (voice) e il totale, dalla fine della domanda alla prima parola che si sente. Con **Sempre in ascolto** il
-totale comprende anche il secondo di silenzio che chiude la frase (pause).
+totale comprende anche il secondo di silenzio che chiude la frase (pause) e, se la frase ha dovuto aspettare che
+finisse il riconoscimento di quella prima, quell'attesa (wait).
+
+Quello che scrivono whisper-server e llama-server è in `~/.local/share/navplotter-voice/logs`, e le righe sulla
+GPU e sugli errori anche nel log dell'assistente. Se il modello linguistico non parte sulla GPU (per esempio una
+scheda con 4 GB e il modello 7B), l'assistente riprova con 16 strati sulla GPU e poi solo con la CPU.
 Nella web app compare il pulsante del microfono in basso a destra: tocca, parla, tocca di nuovo. Si sente un
 segnale quando ascolta. La risposta arriva in cuffia ed è scritta anche sullo schermo. Si possono anche scrivere
 le domande.

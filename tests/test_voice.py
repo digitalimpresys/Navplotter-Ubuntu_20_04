@@ -146,6 +146,31 @@ class Parts(unittest.TestCase):
         self.assertTrue(1 <= int(V.threads()) <= 8)
 
 
+class Helper(unittest.TestCase):
+    def test_falls_back_when_the_gpu_fails(self):
+        """A helper that stops at once on the GPU (not enough memory) is tried with less on it, and its errors logged."""
+        with tempfile.TemporaryDirectory() as d:
+            prog = os.path.join(d, "llama")
+            open(prog, "w").write("#!%s\nimport sys,time\nif sys.argv[-1] != '0':\n"
+                                  "    print('CUDA error: out of memory'); sys.exit(1)\ntime.sleep(30)\n" % sys.executable)
+            os.chmod(prog, 0o755)
+            old = V.time.sleep
+            V.time.sleep = lambda s: old(min(s, 0.05))
+            try:
+                with self.assertLogs("navplotter.voice", "INFO") as logs:
+                    srv = V.Server("llama-server", [[prog, "-ngl", n] for n in ("99", "16", "0")],
+                                   "http://127.0.0.1:9/", d)
+                    for _ in range(200):
+                        if srv.cmd[-1] == "0" and srv.proc and srv.proc.poll() is None:
+                            break
+                        old(0.05)
+            finally:
+                V.time.sleep = old
+            self.assertEqual(srv.cmd[-1], "0")
+            self.assertTrue(any("out of memory" in m for m in logs.output))
+            srv.proc.kill()
+
+
 class Helpers(unittest.TestCase):
     def test_wake_word(self):
         self.assertEqual(V.after_wake("Computer, dove siamo?", "computer"), "dove siamo")
