@@ -20,6 +20,19 @@ TX_MOVING_S, TX_STOPPED_S = 10.0, 30.0
 TX_TIMEOUT_S = 3.0
 
 
+
+def name_prefix():
+    """The start of the default name: RPI on a Raspberry Pi, PC on any other computer (a PC with Ubuntu)."""
+    try:
+        with open("/proc/device-tree/model", "rb") as f:
+            return "RPI" if b"Raspberry" in f.read() else "PC"
+    except OSError:
+        return "PC"
+
+
+NAME_PREFIX = name_prefix()
+
+
 class Node:
     def __init__(self, settings, clock=time.monotonic):
         self.s = settings
@@ -55,8 +68,8 @@ class Node:
     def name(self):
         n = self.s["name"]
         if not n and self.my_id is not None:
-            n = "RPI-%04X" % (self.my_id & 0xFFFF)
-        return n or "RPI"
+            n = "%s-%04X" % (NAME_PREFIX, self.my_id & 0xFFFF)
+        return n or NAME_PREFIX
 
     def alarm(self):
         return AlarmSettings(self.s["alarmRange"], self.s["alarmProfile"], self.s["alarmCpa"], self.s["alarmTcpa"])

@@ -7,7 +7,7 @@ import json
 import os
 
 DEFAULTS = {
-    "name": "",                     # empty: RPI-<last 4 digits of the id>
+    "name": "",                     # empty: PC-<last 4 digits of the id> (RPI- on a Raspberry Pi)
     "type": 0,                      # 0 boat, 1 person, 2 object
     "share": True,                  # transmit our own position
     "alarmRange": 3,
@@ -15,7 +15,7 @@ DEFAULTS = {
     "alarmCpa": 0.1,
     "alarmTcpa": 5,
     "lang": "it",
-    "tiles": 0,                     # 0 online, 1 tiles folder on the Raspberry, 2 none
+    "tiles": 0,                     # 0 online, 1 tiles folder on this computer, 2 none
     "sound": True,
     "id": "",                       # node id in hexadecimal; empty: the modem's
     "modem": "/dev/ttyUSB0",

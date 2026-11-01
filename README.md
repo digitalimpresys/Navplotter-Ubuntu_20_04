@@ -1,11 +1,13 @@
-# NavPlotter Linux
+# NavPlotter Linux per Ubuntu
 
-Nodo NavPlotter fisso per Raspberry Pi (Zero 2 W, Pi 4, Pi 5): stesso protocollo LoRa, mesh, chat, allarmi e
-web app dei nodi NavPlotter esistenti, con integrazione Signal K e OpenCPN.
+Nodo NavPlotter fisso per un PC con Ubuntu 26.04 (va anche su 24.04 e, come prima, sul Raspberry Pi): stesso
+protocollo LoRa, mesh, chat, allarmi e web app dei nodi NavPlotter esistenti, con integrazione Signal K e OpenCPN.
+Viene da [Navplotter-Linux](https://github.com/digitalimpresys/Navplotter-Linux) (ramo `voce`): lo scopo
+principale del PC è l'assistente vocale con modelli più grandi e la misura della latenza.
 
 ## Cosa serve
 
-- Un Raspberry Pi con Raspberry Pi OS (Bookworm o successivo).
+- Un PC (x86_64) con Ubuntu 26.04 Desktop, oppure un Raspberry Pi con Raspberry Pi OS (Bookworm o successivo).
 - Un Heltec V2 o V4 con il firmware modem (`firmware/heltec-modem`), collegato via USB. La V4 con il suo modulo
   GPS fa anche da GPS: non serve altro.
 - Facoltativo: un GPS USB (per esempio G-Mouse), oppure una posizione fissa, gpsd o Signal K.
@@ -15,13 +17,29 @@ web app dei nodi NavPlotter esistenti, con integrazione Signal K e OpenCPN.
 Con un comando solo:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/digitalimpresys/Navplotter-Linux/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/digitalimpresys/Navplotter-Ubuntu_20_04/main/install.sh | sudo bash
 ```
 
 Oppure da una copia del repository: `sudo ./install.sh`. Per un altro ramo: `NAVPLOTTER_BRANCH=<ramo>`.
 
 L'installer mette il programma in `/opt/navplotter`, crea l'utente `navplotter`, il link `/dev/navplotter-modem`
-per l'Heltec V2 (CP2102, 10c4:ea60) e il servizio `navplotter`. La web app è su `http://<raspberry>/`.
+per l'Heltec V2 (CP2102, 10c4:ea60) e il servizio `navplotter`. La web app è su `http://<computer>/`, sul PC
+stesso `http://localhost/`.
+
+### Sul PC con Ubuntu
+
+L'installer fa da solo queste cose, che sul Raspberry non servono:
+
+- toglie **brltty** (il programma dei display Braille), che su Ubuntu si prende la porta seriale dell'Heltec V2
+  appena la colleghi;
+- dice a **ModemManager** di lasciare stare anche l'Heltec V2, non solo la V4;
+- se la **porta 80** è già usata da un altro programma (Apache, nginx...), mette la web app sulla 8080;
+- se il firewall **ufw** è attivo, apre la porta della web app;
+- la **telecamera** non viene installata da sola (la webcam del portatile non è quella di bordo): per ora resta
+  da fare, con `NAVPLOTTER_CAMERA=1` prima del comando.
+
+Da fare a mano: spegnere la sospensione automatica (Impostazioni > Alimentazione), altrimenti il nodo si ferma
+quando il PC va in sospensione. Il nome di serie del nodo è `PC-<ultime 4 cifre dell'id>` (sul Raspberry `RPI-`).
 
 Comandi utili:
 
@@ -132,12 +150,12 @@ Il riconoscimento usa modelli generici (COCO): aiuta a vedere, ma **non sostitui
 
 ## Assistente vocale (facoltativo)
 
-Un assistente che si usa a voce, tutto sul Raspberry e senza internet: il riconoscimento della voce con
+Un assistente che si usa a voce, tutto sul computer e senza internet: il riconoscimento della voce con
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp), le risposte dai dati del nodo, la voce con
 [Piper](https://github.com/rhasspy/piper) e, se lo installi, un piccolo modello linguistico con
 [llama.cpp](https://github.com/ggml-org/llama.cpp) per le domande libere.
 
-Microfono e altoparlante sono quelli del Raspberry: una cuffia Bluetooth o un vivavoce. Si installa con l'utente
+Microfono e altoparlante sono quelli del computer: una cuffia Bluetooth o un vivavoce. Si installa con l'utente
 del desktop, quello che ha la cuffia (non con sudo):
 
 ```
@@ -145,7 +163,32 @@ bash /opt/navplotter/tools/voice-install.sh
 NAVPLOTTER_LLM=1 bash /opt/navplotter/tools/voice-install.sh     # anche il modello linguistico
 ```
 
-Scarica circa 550 MB (con il modello linguistico 1,1 GB in più, o 2 GB con `NAVPLOTTER_LLM_MODEL=3b`); se si interrompe, rilancialo e riprende.
+Se si interrompe, rilancialo e riprende. I modelli dipendono dal computer:
+
+| | PC (x86_64) | Raspberry Pi |
+|---|---|---|
+| Scheda grafica (`NAVPLOTTER_GPU`) | `auto`: `cuda` con una NVIDIA da almeno 4 GB, altrimenti la CPU; `vulkan` per AMD e Intel | CPU |
+| Riconoscimento (`NAVPLOTTER_WHISPER`) | `large-v3-turbo` (550 MB) con una GPU o più di 4 core, altrimenti `small` (466 MB) | `small` |
+| Modello linguistico (`NAVPLOTTER_LLM_MODEL`) | `7b` (4,7 GB) con una GPU o più di 4 core e almeno 12 GB di RAM, altrimenti `3b` (2 GB) | `1.5b` (1,1 GB) |
+
+Le schede NVIDIA piccole o vecchie (per esempio una GeForce 840M da 2 GB) non servono: il modello non ci sta, e il
+CUDA di Ubuntu 26.04 non le supporta più.
+
+Per provare altre combinazioni basta rilanciarlo, per esempio
+`NAVPLOTTER_WHISPER=small NAVPLOTTER_LLM_MODEL=3b NAVPLOTTER_LLM=1 bash /opt/navplotter/tools/voice-install.sh`:
+i modelli di riconoscimento già scaricati restano, e si usa quello scelto per ultimo.
+
+**Latenza.** Ogni risposta a una domanda viene cronometrata. Nel pannello dell'assistente c'è una riga come
+"Latenza 1,6 s: voce in testo 0,5, risposta 0,7, sintesi 0,4, pausa 1,0 · ggml-large-v3-turbo-q5_0.bin ·
+Qwen2.5-7B-Instruct-Q4_K_M.gguf · GPU cuda", e nel log `latency: ...`. Le parti sono: il riconoscimento della voce
+(stt), la risposta fino alla sua prima frase (answer: i dati del nodo o il modello linguistico), Piper per quella
+frase (voice) e il totale, dalla fine della domanda alla prima parola che si sente. Con **Sempre in ascolto** il
+totale comprende anche il secondo di silenzio che chiude la frase (pause) e, se la frase ha dovuto aspettare che
+finisse il riconoscimento di quella prima, quell'attesa (wait).
+
+Quello che scrivono whisper-server e llama-server è in `~/.local/share/navplotter-voice/logs`, e le righe sulla
+GPU e sugli errori anche nel log dell'assistente. Se il modello linguistico non parte sulla GPU (per esempio una
+scheda con 4 GB e il modello 7B), l'assistente riprova con 16 strati sulla GPU e poi solo con la CPU.
 Nella web app compare il pulsante del microfono in basso a destra: tocca, parla, tocca di nuovo. Si sente un
 segnale quando ascolta. La risposta arriva in cuffia ed è scritta anche sullo schermo. Si possono anche scrivere
 le domande.
@@ -167,15 +210,15 @@ Nel pannello dell'assistente (tieni premuto il pulsante del microfono per aprirl
 - **Dialogo libero**: con il modello linguistico installato, le domande lunghe e quelle che non sono comandi
   vanno a lui, che ricorda le ultime battute e comincia a parlare appena ha la prima frase.
 
-- Il servizio è `navplotter-voice` dell'utente: `systemctl --user status navplotter-voice`,
-  log con `sudo journalctl _SYSTEMD_USER_UNIT=navplotter-voice.service -f` (Raspberry Pi OS tiene il log degli
-  utenti nel giornale di sistema).
+- Il servizio è `navplotter-voice` dell'utente: `systemctl --user status navplotter-voice`, log con
+  `journalctl --user -u navplotter-voice -f` su Ubuntu, `sudo journalctl _SYSTEMD_USER_UNIT=navplotter-voice.service -f`
+  su Raspberry Pi OS (che tiene il log degli utenti nel giornale di sistema).
 - Il modello linguistico non sa il meteo e può sbagliare: per i dati di navigazione valgono le risposte dirette.
 
 ## App Android
 
 L'API JSON è la stessa dei nodi (`/api/state`, `/api/config`, `/api/messages`...) e risponde anche alle richieste
-CORS, quindi l'app può collegarsi all'indirizzo del Raspberry.
+CORS, quindi l'app può collegarsi all'indirizzo del computer.
 
 ## Test
 

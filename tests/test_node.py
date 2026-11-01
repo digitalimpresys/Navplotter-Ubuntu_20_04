@@ -13,7 +13,7 @@ from navplotter import ais as A
 from navplotter import chat as C
 from navplotter import protocol as P
 from navplotter.mesh import SeenTable
-from navplotter.node import Node
+from navplotter.node import NAME_PREFIX, Node
 from navplotter.settings import Settings
 from navplotter.traffic import AlarmSettings, Own, Traffic
 
@@ -328,7 +328,7 @@ class NodeTraffic(unittest.TestCase):
         self.node.tick()
         self.assertEqual(len(self.node.modem.sent), 1)
         pos = P.unpack_position(self.node.modem.sent[0])
-        self.assertEqual((pos.id, pos.ttl, pos.name), (0xB8DF802C, 2, "RPI-802C"))
+        self.assertEqual((pos.id, pos.ttl, pos.name), (0xB8DF802C, 2, NAME_PREFIX + "-802C"))
         # Our own packet relayed back by another node is not a target
         self.node.on_packet(P.with_ttl(self.node.modem.sent[0], 1), -50)
         self.assertEqual(self.node.traffic.targets, {})
