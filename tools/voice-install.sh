@@ -39,7 +39,7 @@ if [ "$ARCH" = x86_64 ] && { [ "$GPU" != none ] || [ "$JOBS" -gt 4 ]; }; then
   WHISPER=${NAVPLOTTER_WHISPER:-large-v3-turbo}
   if [ "$RAM_GB" -ge 12 ]; then LLM_MODEL=${NAVPLOTTER_LLM_MODEL:-7b}; else LLM_MODEL=${NAVPLOTTER_LLM_MODEL:-3b}; fi
 elif [ "$ARCH" = x86_64 ]; then
-  # A PC with 4 cores or fewer and no GPU: large-v3-turbo took 9 s for a short question on one (i5 of 2015), small is several times faster
+  # A PC with 4 cores or fewer and no GPU: large-v3-turbo took 9 s for a short question on one, small is several times faster
   WHISPER=${NAVPLOTTER_WHISPER:-small}
   LLM_MODEL=${NAVPLOTTER_LLM_MODEL:-3b}
 else
